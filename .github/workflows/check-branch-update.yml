@@ -1,0 +1,90 @@
+name: Branch Update Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [ main ]
+
+jobs:
+  check-latest-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: Fetch latest main
+        run: |
+          git fetch origin main
+
+      - name: Check if main is merged into feature branch
+        id: check
+        run: |
+          echo "==================================="
+          echo "🔍 最新のmainブランチとの同期チェック"
+          echo "==================================="
+
+          # mainブランチの最新コミットを取得
+          MAIN_LATEST=$(git rev-parse origin/main)
+          echo "📍 mainブランチの最新コミット: ${MAIN_LATEST:0:7}"
+
+          # 現在のブランチにmainの最新が含まれているかチェック
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "✅ SUCCESS: featureブランチは最新のmainブランチを含んでいます"
+            echo "sync_status=updated" >> $GITHUB_OUTPUT
+          else
+            echo "❌ ERROR: featureブランチは最新のmainブランチを含んでいません"
+            echo ""
+            echo "📋 必要な対応:"
+            echo "1. ローカルでこのブランチをチェックアウト"
+            echo "   git checkout ${{ github.head_ref }}"
+            echo ""
+            echo "2. 最新のmainブランチをpull"
+            echo "   git pull origin main"
+            echo ""
+            echo "3. 変更をpush"
+            echo "   git push origin ${{ github.head_ref }}"
+            echo ""
+            echo "==================================="
+            echo "sync_status=outdated" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Comment on PR if outdated
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const comment = `## ⚠️ マージ要件を満たしていません
+
+            このPRをマージするには、最新の\`main\`ブランチの変更を取り込む必要があります。
+
+            ### 📝 対応手順:
+
+            \`\`\`bash
+            # 1. このブランチをチェックアウト
+            git checkout ${{ github.head_ref }}
+
+            # 2. 最新のmainブランチをpull
+            git pull origin main
+
+            # 3. コンフリクトがある場合は解決
+
+            # 4. 変更をpush
+            git push origin ${{ github.head_ref }}
+            \`\`\`
+
+            ### 💡 GitHub UIから更新する場合:
+            このPRページの下部にある **"Update branch"** ボタンをクリックしてください。
+
+            ---
+            *このチェックは自動的に実行されます。更新後、CIが再実行されます。*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
